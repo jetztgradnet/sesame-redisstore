@@ -1,0 +1,20 @@
+apply plugin:'java'
+apply plugin:'eclipse'
+
+group = 'net.jetztgrad'
+
+sourceCompatibility = 1.7
+version = '1.0'
+
+dependencies {
+	compile 'org.openrdf.sesame:sesame:2.7.3'
+	testCompile 'junit:junit:4.11' 
+}
+
+repositories {
+	mavenCentral()
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '1.6'
+}
