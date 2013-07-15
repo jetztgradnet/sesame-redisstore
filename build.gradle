@@ -6,9 +6,18 @@ group = 'net.jetztgrad'
 sourceCompatibility = 1.7
 version = '1.0'
 
+ext.sesameVersion = "2.7.3"
+ext.jedisVersion = "2.1.0"
+ext.junitVersion = "4.11"
+ext.slf4jVersion = "1.6.1"
+
 dependencies {
-	compile 'org.openrdf.sesame:sesame:2.7.3'
-	testCompile 'junit:junit:4.11' 
+	compile "redis.clients:jedis:$jedisVersion"
+	compile "org.openrdf.sesame:sesame-runtime:$sesameVersion"
+	
+	testCompile "junit:junit:$junitVersion"
+	testRuntime "org.openrdf.sesame:sesame-store-testsuite:$sesameVersion"
+	testRuntime "org.slf4j:slf4j-simple:$slf4jVersion"
 }
 
 repositories {
