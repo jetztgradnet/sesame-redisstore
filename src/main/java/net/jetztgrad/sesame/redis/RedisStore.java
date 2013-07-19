@@ -22,11 +22,12 @@ public class RedisStore extends NotifyingSailBase {
 
 	protected ValueFactory valueFactory;
 	protected JedisPool pool;
-	protected DefaultRedisMapping redisMapping;
+	protected RedisMappingStrategy redisMapping;
 	
 	public RedisStore() {
 		this.valueFactory = new ValueFactoryImpl();
-		this.redisMapping = new DefaultRedisMapping();
+		// TODO autodetect config incl. used mapping from Redis store
+		this.redisMapping = new DefaultRedisMappingStrategy();
 	}
 	
 	@Override
@@ -104,7 +105,7 @@ public class RedisStore extends NotifyingSailBase {
 		pool.destroy();
 	}
 	
-	public RedisMapping getRedisMapping() {
+	public RedisMappingStrategy getMappingStrategy() {
 		return redisMapping;
 	}
 }

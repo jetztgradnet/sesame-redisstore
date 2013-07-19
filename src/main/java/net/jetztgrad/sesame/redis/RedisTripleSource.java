@@ -13,26 +13,20 @@ import org.openrdf.model.vocabulary.RDF;
 import org.openrdf.query.QueryEvaluationException;
 import org.openrdf.query.algebra.evaluation.TripleSource;
 
-public class RedisTripleSource implements TripleSource {
+public abstract class RedisTripleSource implements TripleSource {
 
-	protected final RedisStore redisStore;
+	protected final RedisStoreConnection connection;
 	protected final boolean includeInferred;
-	protected final boolean transactionActive;
-	protected final RedisStoreConnection redisStoreConnection;
 
-	public RedisTripleSource(RedisStore redisStore, RedisStoreConnection redisStoreConnection, boolean includeInferred,
-			boolean transactionActive) {
-		this.redisStore = redisStore;
-		this.redisStoreConnection = redisStoreConnection;
+	public RedisTripleSource(RedisStoreConnection connection, boolean includeInferred) {
+		this.connection = connection;
 		this.includeInferred = includeInferred;
-		this.transactionActive = transactionActive;
 	}
 
 	@Override
 	public CloseableIteration<? extends Statement, QueryEvaluationException> getStatements(
 			Resource subj, URI pred, Value obj, Resource... contexts)
 			throws QueryEvaluationException {
-		
 		// retrieve triples from Redis
 		if  (subj instanceof URI) {
 			URI subjURI = ((URI)subj);
@@ -70,43 +64,31 @@ public class RedisTripleSource implements TripleSource {
 		
 		return getAllStatements(obj, contexts);
 	}
-
-	protected CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsBySubject(URI subjURI,
-			URI pred, Value obj, Resource[] contexts) {
-		// TODO Auto-generated method stub
-		return noResult();
-	}
-
-	protected CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByType(URI typeUri,
-			Resource[] contexts) {
-		// TODO Auto-generated method stub
-		return noResult();
-	}
-
-	protected CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByPredicate(URI pred,
-			Resource[] contexts) {
-		// TODO Auto-generated method stub
-		return noResult();
-	}
-
-	protected CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByValue(Value obj,
-			Resource[] contexts) {
-		// TODO Auto-generated method stub
-		return noResult();
-	}
-
-	protected CloseableIteration<? extends Statement, QueryEvaluationException> getAllStatements(Value obj,
-			Resource[] contexts) {
-		// TODO Auto-generated method stub
-		return noResult();
-	}
-
+	
 	@Override
 	public ValueFactory getValueFactory() {
-		return redisStore.getValueFactory();
+		return connection.getValueFactory();
 	}
+	
+	public abstract long size(Resource[] contexts);
 	
 	protected CloseableIteration<? extends Statement, QueryEvaluationException> noResult() {
 		return new EmptyIteration<Statement, QueryEvaluationException>();
 	}
+	
+	protected abstract CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsBySubject(URI subjURI,
+			URI pred, Value obj, Resource[] contexts);
+
+	protected abstract CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByType(URI typeUri,
+			Resource[] contexts);
+
+	protected abstract CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByPredicate(URI pred,
+			Resource[] contexts);
+
+	protected abstract CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByValue(Value obj,
+			Resource[] contexts);
+
+	protected abstract CloseableIteration<? extends Statement, QueryEvaluationException> getAllStatements(Value obj,
+			Resource[] contexts);
+
 }

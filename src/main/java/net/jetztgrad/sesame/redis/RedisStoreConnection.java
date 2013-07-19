@@ -1,5 +1,7 @@
 package net.jetztgrad.sesame.redis;
 
+import static net.jetztgrad.sesame.redis.RedisKeys.CONTEXTS;
+import static net.jetztgrad.sesame.redis.RedisKeys.NAMESPACES;
 import info.aduna.iteration.CloseableIteration;
 import info.aduna.iteration.ConvertingIteration;
 import info.aduna.iteration.ExceptionConvertingIteration;
@@ -14,6 +16,7 @@ import org.openrdf.model.Resource;
 import org.openrdf.model.Statement;
 import org.openrdf.model.URI;
 import org.openrdf.model.Value;
+import org.openrdf.model.ValueFactory;
 import org.openrdf.model.impl.NamespaceImpl;
 import org.openrdf.model.impl.URIImpl;
 import org.openrdf.query.BindingSet;
@@ -41,32 +44,64 @@ import org.openrdf.sail.helpers.NotifyingSailConnectionBase;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Transaction;
-import static net.jetztgrad.sesame.redis.RedisKey.*;
 
 public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 		NotifyingSailConnection {
 
 	protected final RedisStore redisStore;
-	protected final Jedis jedis;
-	protected Transaction transaction = null;
+	protected final RedisMappingStrategy mapping;
+	private Jedis jedisReadClient = null;
+	private Jedis jedisWriteClient = null;
+	private Transaction transaction = null;
 
 	public RedisStoreConnection(RedisStore store) {
 		super(store);
 		this.redisStore = store;
-		this.jedis = store.getJedisClient();
+		this.mapping = store.getMappingStrategy();
 	}
 	
 	public RedisStore getRedisStore() {
 		return redisStore;
 	}
 	
-	protected Jedis getJedisClient() {
-		return jedis;
+	public ValueFactory getValueFactory() {
+		return redisStore.getValueFactory();
+	}
+	
+	protected Transaction getActiveTransaction() throws SailException {
+		verifyIsActive();
+		return transaction;
+	}
+	
+	protected Jedis getJedisReadClient() {
+		if (jedisReadClient == null) {
+			jedisReadClient = redisStore.getJedisClient();
+		}
+		return jedisReadClient;
 	}
 	
 	@Override
 	protected void closeInternal() throws SailException {
-		redisStore.releaseJedisClient(jedis);
+		// return all handed out Jedis clients and discard open transactions
+		try {
+			// close read client
+			if (jedisReadClient == null) {
+				redisStore.releaseJedisClient(jedisReadClient);
+			}
+		}
+		finally {
+			// close write client and discard open transaction
+			if (jedisWriteClient == null) {
+				try {
+					if (transaction != null) {
+						transaction.discard();
+					}
+				}
+				finally {
+					redisStore.releaseJedisClient(jedisWriteClient);
+				}
+			}
+		}
 	}
 
 	@Override
@@ -84,7 +119,7 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 		}
 
 		try {
-			RedisTripleSource tripleSource = new RedisTripleSource(redisStore, this, includeInferred, transactionActive());
+			RedisTripleSource tripleSource = createTripleSource(includeInferred);
 			EvaluationStrategy strategy = getEvaluationStrategy(dataset, tripleSource);
 
 			new BindingAssigner().optimize(tupleExpr, dataset, bindings);
@@ -116,7 +151,7 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 	@Override
 	protected CloseableIteration<? extends Resource, SailException> getContextIDsInternal()
 			throws SailException {
-		Set<String> contexts = jedis.smembers(getRedisMapping().getSystemKey(CONTEXTS));
+		Set<String> contexts = getJedisReadClient().smembers(getRedisMapping().key(CONTEXTS));
 		CollectionIteration<String, SailException> contextsIteration = new CollectionIteration<>(contexts);
 		return new ConvertingIteration<String, Resource, SailException>(contextsIteration) {
 			@Override
@@ -132,7 +167,7 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 			Resource subj, URI pred, Value obj, boolean includeInferred,
 			Resource... contexts) throws SailException {
 		try {
-			RedisTripleSource tripleSource = new RedisTripleSource(redisStore, this, includeInferred, transactionActive());
+			RedisTripleSource tripleSource = createTripleSource(includeInferred);
 			CloseableIteration<? extends Statement, QueryEvaluationException> iter = tripleSource.getStatements(subj, pred, obj, contexts);
 
 			return new ExceptionConvertingIteration<Statement, SailException>(iter) {
@@ -158,10 +193,18 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 		}
 	}
 
+	protected RedisTripleSource createTripleSource(boolean includeInferred) {
+		return mapping.createTripleSource(this, includeInferred);
+	}
+	
+	protected RedisTripleWriter createTripleWriter() {
+		return mapping.createTripleWriter(this);
+	}
+
 	@Override
 	protected long sizeInternal(Resource... contexts) throws SailException {
-		// TODO Auto-generated method stub
-		return 0;
+		RedisTripleSource tripleSource = createTripleSource(false);
+		return tripleSource.size(contexts);
 	}
 
 	@Override
@@ -169,53 +212,93 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 		if (isActive()) {
 			throw new SailException("Already have active transaction");
 		}
-		// start transaction
-		transaction = jedis.multi();
-		// TODO coordinate with regular triple writing, which is a non-atomic operation
+		
+		if (jedisWriteClient == null) {
+			jedisWriteClient = redisStore.getJedisClient();
+		}
+		try {
+			transaction = jedisWriteClient.multi();
+		}
+		catch (Throwable t) {
+			throw new SailException("failed to start transaction: " + t.getMessage(), t);
+		}
 	}
 
 	@Override
 	protected void commitInternal() throws SailException {
 		verifyIsActive();
-		// execute transaction and reset the transaction field
-		transaction.exec();
-		transaction = null;
+		
+		try {
+			// execute transaction and reset the transaction field
+			// TODO use results somehow?
+			transaction.exec();
+		}
+		catch (Throwable t) {
+			throw new SailException("failed to commit transaction: " + t.getMessage(), t);
+		}
+		finally {
+			transaction = null;
+		}
 	}
 
 	@Override
 	protected void rollbackInternal() throws SailException {
 		verifyIsActive();
-		// discard transaction and reset the transaction field
-		transaction.discard();
-		transaction = null;
+		
+		try {
+			// discard transaction and reset the transaction field
+			transaction.discard();
+		}
+		catch (Throwable t) {
+			throw new SailException("failed to rollback transaction: " + t.getMessage(), t);
+		}
+		finally {
+			transaction = null;
+		}
 	}
 
 	@Override
 	protected void addStatementInternal(Resource subj, URI pred, Value obj,
 			Resource... contexts) throws SailException {
-		// TODO Auto-generated method stub
-
+		// make sure a transaction has been started
+		verifyIsActive();
+		
+		RedisTripleWriter writer = createTripleWriter();
+		
+		try {
+			writer.addStatement(subj, pred, obj, contexts);
+		}
+		catch (Throwable t) {
+			throw new SailException("failed to add statement: " + t.getMessage(), t);
+		}
 	}
 
 	@Override
 	protected void removeStatementsInternal(Resource subj, URI pred, Value obj,
 			Resource... contexts) throws SailException {
-		// TODO Auto-generated method stub
-
+		// make sure a transaction has been started
+		verifyIsActive();
+		
+		RedisTripleWriter writer = createTripleWriter();
+		
+		try {
+			writer.removeStatements(subj, pred, obj, contexts);
+		}
+		catch (Throwable t) {
+			throw new SailException("failed to remove statements: " + t.getMessage(), t);
+		}
 	}
 
 	@Override
 	protected void clearInternal(Resource... contexts) throws SailException {
-		// TODO find better command than flushDB, als this deletes ALL data!
-		//jedis.flushDB();
-		throw new SailException("clear is not currently supported!");
+		removeStatementsInternal(null, null, null, contexts);
 	}
 
 	@Override
 	protected CloseableIteration<? extends Namespace, SailException> getNamespacesInternal()
 			throws SailException {
 		// lookup namespaces from hash key "namespaces"
-		Map<String, String> namespaces = jedis.hgetAll(getRedisMapping().getSystemKey(NAMESPACES));
+		Map<String, String> namespaces = getJedisReadClient().hgetAll(getRedisMapping().key(NAMESPACES));
 		CollectionIteration<Entry<String, String>, SailException> namespacesIteration = new CollectionIteration<>(namespaces.entrySet());
 		return new ConvertingIteration<Entry<String, String>, Namespace, SailException>(namespacesIteration) {
 			@Override
@@ -229,7 +312,7 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 	@Override
 	protected String getNamespaceInternal(String prefix) throws SailException {
 		// lookup namespace from hash key "namespaces"
-		String namespace = jedis.hget(getRedisMapping().getSystemKey(NAMESPACES), prefix);
+		String namespace = getJedisReadClient().hget(getRedisMapping().key(NAMESPACES), prefix);
 		return namespace;
 	}
 
@@ -238,24 +321,24 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 			throws SailException {
 		verifyIsActive();
 		// set namespace in hash key "namespaces"
-		transaction.hset(getRedisMapping().getSystemKey(NAMESPACES), prefix, name);
+		transaction.hset(getRedisMapping().key(NAMESPACES), prefix, name);
 	}
 
 	@Override
 	protected void removeNamespaceInternal(String prefix) throws SailException {
 		verifyIsActive();
 		// delete namespace from hash key "namespaces"
-		transaction.hdel(getRedisMapping().getSystemKey(NAMESPACES), prefix);
+		transaction.hdel(getRedisMapping().key(NAMESPACES), prefix);
 	}
 
 	@Override
 	protected void clearNamespacesInternal() throws SailException {
 		verifyIsActive();
 		// delete namespaces from hash key "namespaces"
-		transaction.del(getRedisMapping().getSystemKey(NAMESPACES));
+		transaction.del(getRedisMapping().key(NAMESPACES));
 	}
 	
-	public RedisMapping getRedisMapping() {
-		return redisStore.getRedisMapping();
+	public RedisMappingStrategy getRedisMapping() {
+		return redisStore.getMappingStrategy();
 	}
 }
