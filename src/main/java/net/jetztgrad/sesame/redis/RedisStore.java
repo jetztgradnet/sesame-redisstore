@@ -1,8 +1,8 @@
 package net.jetztgrad.sesame.redis;
 
 import org.apache.commons.pool.impl.GenericObjectPool.Config;
-import org.openrdf.model.ValueFactory;
-import org.openrdf.model.impl.ValueFactoryImpl;
+import org.openrdf.model.Resource;
+import org.openrdf.model.impl.URIImpl;
 import org.openrdf.sail.NotifyingSailConnection;
 import org.openrdf.sail.SailException;
 import org.openrdf.sail.helpers.NotifyingSailBase;
@@ -20,14 +20,12 @@ import redis.clients.jedis.exceptions.JedisException;
  */
 public class RedisStore extends NotifyingSailBase {
 
-	protected ValueFactory valueFactory;
+	protected RedisValueFactory valueFactory;
 	protected JedisPool pool;
+	protected Resource defaultContext;
 	protected RedisMappingStrategy redisMapping;
 	
 	public RedisStore() {
-		this.valueFactory = new ValueFactoryImpl();
-		// TODO autodetect config incl. used mapping from Redis store
-		this.redisMapping = new DefaultRedisMappingStrategy();
 	}
 	
 	@Override
@@ -42,7 +40,7 @@ public class RedisStore extends NotifyingSailBase {
 		int database = Protocol.DEFAULT_DATABASE;
 		Config config = new JedisPoolConfig();
 		
-		pool = new JedisPool(config, host, port, timeout, password, database);
+		this.pool = new JedisPool(config, host, port, timeout, password, database);
 		
 		try {
 			testConnectionInternal();
@@ -50,6 +48,24 @@ public class RedisStore extends NotifyingSailBase {
 		catch (JedisException e) {
 			throw new SailException("failed to connect to Redis database: " + e.getMessage(), e);
 		}
+		
+		// TODO autodetect config incl. used mapping from Redis store
+		String mappingStrategy = null;
+		this.redisMapping = new RedisMappingFactoryImpl().getMapping(mappingStrategy);
+		this.valueFactory = this.redisMapping.getValueFactory();
+		this.defaultContext = new URIImpl("urn:default");
+	}
+	
+	public void setDefaultContext(Resource defaultContext) {
+		this.defaultContext = defaultContext;
+	}
+	
+	public void setDefaultContext(String defaultContext) {
+		this.defaultContext = new URIImpl(defaultContext);
+	}
+	
+	public Resource getDefaultContext() {
+		return defaultContext;
 	}
 	
 	public boolean testConnection() {
@@ -83,6 +99,11 @@ public class RedisStore extends NotifyingSailBase {
 	protected void releaseJedisClient(Jedis jedis) {
 		pool.returnResource(jedis);
 	}
+	
+	@Override
+	public RedisStoreConnection getConnection() throws SailException {
+		return (RedisStoreConnection) super.getConnection();
+	}
 
 	@Override
 	public boolean isWritable() throws SailException {
@@ -90,7 +111,7 @@ public class RedisStore extends NotifyingSailBase {
 	}
 
 	@Override
-	public ValueFactory getValueFactory() {
+	public RedisValueFactory getValueFactory() {
 		return valueFactory;
 	}
 
