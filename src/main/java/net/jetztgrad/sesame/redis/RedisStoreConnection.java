@@ -1,12 +1,11 @@
 package net.jetztgrad.sesame.redis;
 
-import static net.jetztgrad.sesame.redis.RedisKeys.CONTEXTS;
-import static net.jetztgrad.sesame.redis.RedisKeys.NAMESPACES;
 import info.aduna.iteration.CloseableIteration;
 import info.aduna.iteration.ConvertingIteration;
 import info.aduna.iteration.ExceptionConvertingIteration;
 
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -18,7 +17,6 @@ import org.openrdf.model.URI;
 import org.openrdf.model.Value;
 import org.openrdf.model.ValueFactory;
 import org.openrdf.model.impl.NamespaceImpl;
-import org.openrdf.model.impl.URIImpl;
 import org.openrdf.query.BindingSet;
 import org.openrdf.query.Dataset;
 import org.openrdf.query.QueryEvaluationException;
@@ -46,7 +44,7 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.Transaction;
 
 public class RedisStoreConnection extends NotifyingSailConnectionBase implements
-		NotifyingSailConnection {
+		NotifyingSailConnection, RedisMappingKeys {
 
 	protected final RedisStore redisStore;
 	protected final RedisMappingStrategy mapping;
@@ -64,7 +62,7 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 		return redisStore;
 	}
 	
-	public ValueFactory getValueFactory() {
+	public RedisValueFactory getValueFactory() {
 		return redisStore.getValueFactory();
 	}
 	
@@ -151,13 +149,15 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 	@Override
 	protected CloseableIteration<? extends Resource, SailException> getContextIDsInternal()
 			throws SailException {
-		Set<String> contexts = getJedisReadClient().smembers(getRedisMapping().key(CONTEXTS));
+		Set<String> contexts = getJedisReadClient().smembers(getRedisMapping().key(KEY_CONTEXTS));
+		
+		final ValueFactory factory = getValueFactory();
 		CollectionIteration<String, SailException> contextsIteration = new CollectionIteration<>(contexts);
 		return new ConvertingIteration<String, Resource, SailException>(contextsIteration) {
 			@Override
 			protected Resource convert(String context)
 					throws SailException {
-				return new URIImpl(context);
+				return factory.createURI(context);
 			}
 		};
 	}
@@ -298,7 +298,7 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 	protected CloseableIteration<? extends Namespace, SailException> getNamespacesInternal()
 			throws SailException {
 		// lookup namespaces from hash key "namespaces"
-		Map<String, String> namespaces = getJedisReadClient().hgetAll(getRedisMapping().key(NAMESPACES));
+		Map<String, String> namespaces = getJedisReadClient().hgetAll(getRedisMapping().key(KEY_NAMESPACES));
 		CollectionIteration<Entry<String, String>, SailException> namespacesIteration = new CollectionIteration<>(namespaces.entrySet());
 		return new ConvertingIteration<Entry<String, String>, Namespace, SailException>(namespacesIteration) {
 			@Override
@@ -312,7 +312,7 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 	@Override
 	protected String getNamespaceInternal(String prefix) throws SailException {
 		// lookup namespace from hash key "namespaces"
-		String namespace = getJedisReadClient().hget(getRedisMapping().key(NAMESPACES), prefix);
+		String namespace = getJedisReadClient().hget(getRedisMapping().key(KEY_NAMESPACES), prefix);
 		return namespace;
 	}
 
@@ -321,24 +321,85 @@ public class RedisStoreConnection extends NotifyingSailConnectionBase implements
 			throws SailException {
 		verifyIsActive();
 		// set namespace in hash key "namespaces"
-		transaction.hset(getRedisMapping().key(NAMESPACES), prefix, name);
+		transaction.hset(getRedisMapping().key(KEY_NAMESPACES), prefix, name);
 	}
 
 	@Override
 	protected void removeNamespaceInternal(String prefix) throws SailException {
 		verifyIsActive();
 		// delete namespace from hash key "namespaces"
-		transaction.hdel(getRedisMapping().key(NAMESPACES), prefix);
+		transaction.hdel(getRedisMapping().key(KEY_NAMESPACES), prefix);
 	}
 
 	@Override
 	protected void clearNamespacesInternal() throws SailException {
 		verifyIsActive();
 		// delete namespaces from hash key "namespaces"
-		transaction.del(getRedisMapping().key(NAMESPACES));
+		transaction.del(getRedisMapping().key(KEY_NAMESPACES));
 	}
 	
 	public RedisMappingStrategy getRedisMapping() {
 		return redisStore.getMappingStrategy();
+	}
+
+	public Resource getDefaultContext() {
+		return redisStore.getDefaultContext();
+	}
+	
+	/**
+	 * If the specified array of contexts is <code>null</code> or empty, all contexts are return.
+	 * 
+	 * @param contexts contexts to check
+	 * 
+	 * @return specified contexts or all contexts
+	 */
+	public Resource[] checkContexts(Resource... contexts) {
+		/*
+		 * from SailConnection#getStatements():
+		 * @param contexts
+		 *        The context(s) to get the data from. Note that this parameter is a
+		 *        vararg and as such is optional. If no contexts are specified the
+		 *        method operates on the entire repository. A <tt>null</tt> value can
+		 *        be used to match context-less statements.
+		 */
+		Set<Resource> contextURIs = new HashSet<Resource>();
+		if ((contexts == null) || (contexts.length == 0)) {
+			// return all contexts
+			Set<Resource> allContexts = getAllContexts();
+			contextURIs.addAll(allContexts);
+			contextURIs.add(getDefaultContext());
+		}
+		else {
+			for (Resource resource : contexts) {
+				if (resource == null) {
+					contextURIs.add(getDefaultContext());
+				}
+				else {
+					contextURIs.add(resource);
+				}
+			}
+		}
+		contexts = (Resource[]) contextURIs.toArray(new Resource[contextURIs.size()]);
+		return contexts;
+	}
+	
+	/**
+	 * Get all contexts in this triple store
+	 * 
+	 * @return set of all context {@link URI}s
+	 */
+	public Set<Resource> getAllContexts() {
+		Set<String> contexts = getJedisReadClient().smembers(getRedisMapping().key(KEY_CONTEXTS));
+		final ValueFactory factory = getValueFactory();
+		Set<Resource> contextURIs = new HashSet<Resource>();
+		for (String context : contexts) {
+			contextURIs.add(factory.createURI(context));
+		}
+		return contextURIs;
+	}
+
+	public boolean isDefaultContext(Resource context) {
+		if (context == null) return false;
+		return context.equals(getDefaultContext());
 	}
 }

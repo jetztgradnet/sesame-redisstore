@@ -19,13 +19,17 @@ public abstract class RedisTripleWriter {
 		return redisStoreConnection.getActiveTransaction();
 	}
 	
-	protected Jedis getJedisReadClient() {
+	protected Jedis getReadClient() {
 		return redisStoreConnection.getJedisReadClient();
 	}
 	
+	protected RedisStoreConnection getConnection() {
+		return redisStoreConnection;
+	}
+	
 	public abstract void addStatement(Resource subj, URI pred, Value obj,
-			Resource[] contexts);
+			Resource[] contexts) throws SailException;
 
 	public abstract void removeStatements(Resource subj, URI pred, Value obj,
-			Resource[] contexts);
+			Resource[] contexts) throws SailException;
 }

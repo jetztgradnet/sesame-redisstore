@@ -28,11 +28,10 @@ cons
 #### Usage
 
 * use intersection to find matching results
+	SINTER subject:(subject)
 
 
 #### Data Mapping
-
-	SINTER subject:(subject)
 
 	subject:(subject) [set/zset]
 		(tripleid-1)

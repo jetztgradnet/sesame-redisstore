@@ -1,8 +1,9 @@
 package net.jetztgrad.sesame.redis;
 
-import org.openrdf.query.algebra.evaluation.TripleSource;
-
 import net.jetztgrad.sesame.redis.util.KeyBuilder;
+
+import org.openrdf.model.ValueFactory;
+import org.openrdf.query.algebra.evaluation.TripleSource;
 
 /**
  * The mapping strategy specifies how to map triples or quadruples to Redis keys and data structures.
@@ -50,13 +51,21 @@ public interface RedisMappingStrategy {
 	RedisTripleSource createTripleSource(RedisStoreConnection connection, boolean includeInferred);
 	
 	/**
-	 * Create a {@link RedisTripleWriter} for this maooing strategy.
+	 * Create a {@link RedisTripleWriter} for this mapping strategy.
 	 * 
 	 * @param connection connection to the Redis store
 	 * 
 	 * @return triple writer
 	 */
 	RedisTripleWriter createTripleWriter(RedisStoreConnection connection);
+	
+	
+	/**
+	 * Get the {@link ValueFactory} for this mapping strategy.
+	 * 
+	 * @return value factory
+	 */
+	RedisValueFactory getValueFactory();
 
 	/**
 	 * Get key of config hash. The config hash contains settings for configuration of this triple store,
@@ -73,4 +82,5 @@ public interface RedisMappingStrategy {
 	 * @return key of runtime hash
 	 */
 	String runtimeKey();
+	
 }

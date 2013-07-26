@@ -1,18 +1,14 @@
 package net.jetztgrad.sesame.redis;
 
-import redis.clients.jedis.Jedis;
 import net.jetztgrad.sesame.redis.util.IdGenerator;
 import net.jetztgrad.sesame.redis.util.KeyBuilder;
 import net.jetztgrad.sesame.redis.util.RedisIdGenerator;
+import redis.clients.jedis.Jedis;
 
-public abstract class AbstractRedisMappingStrategy implements RedisMappingStrategy {
-	public final static String HKEY_SYSTEM_NEXT_ID = "nextId";
-	
-	public final static String KEY_CONFIG = "config";
-	public final static String KEY_RUNTIME = "runtime";
-	
+public abstract class AbstractRedisMappingStrategy implements RedisMappingStrategy, RedisMappingKeys {
 	protected final String name;
 	protected final String keyPrefix;
+	protected RedisValueFactory valueFactory;
 	
 	public AbstractRedisMappingStrategy(String name) {
 		this(name, null);
@@ -26,6 +22,18 @@ public abstract class AbstractRedisMappingStrategy implements RedisMappingStrate
 	@Override
 	public String getMappingName() {
 		return name;
+	}
+	
+	@Override
+	public RedisValueFactory getValueFactory() {
+		if (valueFactory == null) {
+			valueFactory = createValueFactory();
+		}
+		return valueFactory;
+	}
+	
+	protected RedisValueFactory createValueFactory() {
+		return new RedisValueFactory();
 	}
 	
 	@Override
@@ -54,5 +62,9 @@ public abstract class AbstractRedisMappingStrategy implements RedisMappingStrate
 	
 	protected IdGenerator getIdGenerator(String idName, Jedis jedis) {
 		return new RedisIdGenerator(runtimeKey(), idName, jedis);
+	}
+	
+	public String createKey(String index) {
+		return keyBuilder(index).toString();
 	}
 }

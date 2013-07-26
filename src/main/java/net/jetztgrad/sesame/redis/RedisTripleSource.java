@@ -8,10 +8,13 @@ import org.openrdf.model.Resource;
 import org.openrdf.model.Statement;
 import org.openrdf.model.URI;
 import org.openrdf.model.Value;
-import org.openrdf.model.ValueFactory;
 import org.openrdf.model.vocabulary.RDF;
 import org.openrdf.query.QueryEvaluationException;
 import org.openrdf.query.algebra.evaluation.TripleSource;
+import org.openrdf.sail.SailException;
+
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.Transaction;
 
 public abstract class RedisTripleSource implements TripleSource {
 
@@ -66,7 +69,7 @@ public abstract class RedisTripleSource implements TripleSource {
 	}
 	
 	@Override
-	public ValueFactory getValueFactory() {
+	public RedisValueFactory getValueFactory() {
 		return connection.getValueFactory();
 	}
 	
@@ -76,19 +79,40 @@ public abstract class RedisTripleSource implements TripleSource {
 		return new EmptyIteration<Statement, QueryEvaluationException>();
 	}
 	
-	protected abstract CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsBySubject(URI subjURI,
-			URI pred, Value obj, Resource[] contexts);
+	protected CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsBySubject(URI subjURI,
+			URI pred, Value obj, Resource[] contexts) {
+		return noResult();
+	}
 
-	protected abstract CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByType(URI typeUri,
-			Resource[] contexts);
+	protected CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByType(URI typeUri,
+			Resource[] contexts) {
+		return noResult();
+	}
 
-	protected abstract CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByPredicate(URI pred,
-			Resource[] contexts);
+	protected CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByPredicate(URI pred,
+			Resource[] contexts) {
+		return noResult();
+	}
 
-	protected abstract CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByValue(Value obj,
-			Resource[] contexts);
+	protected CloseableIteration<? extends Statement, QueryEvaluationException> getStatementsByValue(Value obj,
+			Resource[] contexts) {
+		return noResult();
+	}
 
-	protected abstract CloseableIteration<? extends Statement, QueryEvaluationException> getAllStatements(Value obj,
-			Resource[] contexts);
+	protected CloseableIteration<? extends Statement, QueryEvaluationException> getAllStatements(Value obj,
+			Resource[] contexts) {
+		return noResult();
+	}
 
+	protected Transaction getActiveTransaction() throws SailException {
+		return connection.getActiveTransaction();
+	}
+	
+	protected Jedis getReadClient() {
+		return connection.getJedisReadClient();
+	}
+	
+	protected RedisStoreConnection getConnection() {
+		return connection;
+	}
 }
